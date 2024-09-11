@@ -10,7 +10,7 @@
 - 谷歌在DL上没踩对拍子啊, 纰漏的根源在哪里???
 
 ### 2. PyTorch的DL框架模板(150行)
-```
+```Python
 import torch, time
 import numpy as np
 import torch.nn as nn
