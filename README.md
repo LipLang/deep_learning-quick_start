@@ -1,5 +1,10 @@
 # deep_learning-quick_start -- `深度学习`起步集
 
+```
+[初体验的TideLite代码](https://github.com/LipLang/deep_learning-quick_start/blob/main/tidelite_manually.ipynb)有误,
+这里需要进行改正(主要删除了多余的ReLu), 并略优化(输入输出扩为多个维度)和扩充(实现了论文中的静态属性和协从变量).
+```
+
 ### 1. 框架选择
 - 再次斟酌之后, 决定all-in `PyTorch`, 其killing feature是`动态计算图`:
     * 动态计算图是在代码运行时，根据实际执行的操作动态构建的。每次运行代码时，计算图都可能不同，这取决于输入数据和程序控制流。Pytorch运行代码时自动跟踪所有操作，并自动计算梯度。
