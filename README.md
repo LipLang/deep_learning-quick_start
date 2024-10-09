@@ -1,10 +1,5 @@
 # deep_learning-quick_start -- `深度学习`起步集
 
-```
-[初体验的TideLite代码](https://github.com/LipLang/deep_learning-quick_start/blob/main/tidelite_manually.ipynb)有误,
-这里需要进行改正(主要删除了多余的ReLu), 并略优化(输入输出扩为多个维度)和扩充(实现了论文中的静态属性和协从变量).
-```
-
 ### 1. 框架选择
 - 再次斟酌之后, 决定all-in `PyTorch`, 其killing feature是`动态计算图`:
     * 动态计算图是在代码运行时，根据实际执行的操作动态构建的。每次运行代码时，计算图都可能不同，这取决于输入数据和程序控制流。Pytorch运行代码时自动跟踪所有操作，并自动计算梯度。
@@ -13,14 +8,29 @@
 - 相比之下, `TensorFlow`和`JAX`都主要是面向静态计算图的.
 - 这样看来, 谷歌在深度学习上没踩对拍子, 纰漏的根源在哪里?
 
-### 2. PyTorch的DL框架模板(150行)
-```Python
-import torch, time
+### 2. PyTorch的DL框架模板
+``` Python
+import enum, time, torch
 import numpy as np
-import torch.nn as nn
-import torch.optim as optim
+from typing import NewType
+from torch import nn, optim
+from einops import rearrange
 from torch.utils.data import DataLoader, Dataset
 import matplotlib.pyplot as plt
+
+EPSILON = 1e-7
+ACTIVATIONS = ["ReLU", "RReLU", "PReLU", "ELU", "Softplus", "Tanh", "SELU", "LeakyReLU", "Sigmoid", "GELU",]
+POOLS = ["MaxPool1d", "AvgPool1d",]
+NORMS = ["BatchNorm1d", "LayerNorm",]
+
+def get_nn_attr(attr, checklist=[]):
+    if not attr: # attr in {'', None, [], 0, ...}
+        return nn.Identity
+    else:
+        if checklist: assert attr in checklist, f"'{attr}' is not in {checklist}"
+        return getattr(nn, attr)
+
+# fn = get_nn_attr('ReLU') -> fn would be the activation func.
 
 # TODO: 根据需要导入其他库，如 sklearn 用于数据处理，pandas 用于数据加载等
 
