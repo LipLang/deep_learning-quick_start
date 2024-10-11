@@ -177,4 +177,14 @@ if __name__ == "__main__": main()
 ```
 
 ### 3. 落脚方向
-`时间序列分析`: 当大佬们集中于`通用智能模型`的时候, 我觉得`超越大脑`或许也是有趣的方向~
+`时间序列分析`: 当大佬们集中于`通用智能模型`的时候, 我觉得`超越大脑`或许也是有趣的方向. 为了更深入地理解, 这里试着实现了相关的网络~
+
+| 模型           | 实现情况    |
+|----------------|------------|
+| [TiDE](https://github.com/LipLang/deep_learning-quick_start/tree/main/TiDE)             | 网络已实现  |
+| [N-BEATS](https://github.com/LipLang/deep_learning-quick_start/tree/main/nBeats)        | 网络已实现  |
+| [N-HiTS](https://github.com/LipLang/deep_learning-quick_start/tree/main/nHits)          | 网络已实现  |
+| [TFT](https://github.com/LipLang/deep_learning-quick_start/tree/main/TempFusionTsfm)    | 尚未实现    |
+| [Informer](https://github.com/LipLang/deep_learning-quick_start/tree/main/informer)     | 尚未实现    |
+| [Autoformer](https://github.com/LipLang/deep_learning-quick_start/tree/main/autoformer) | 尚未实现    |
+| [PatchTST](https://github.com/LipLang/deep_learning-quick_start/tree/main/patchTST)     | 尚未实现    |
