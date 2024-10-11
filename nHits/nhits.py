@@ -15,9 +15,6 @@ POOLS = ["MaxPool1d", "AvgPool1d",]
 NORMS = ["BatchNorm1d", "LayerNorm",]
 
 
-#  · <=>---<=> · <=>---<=> · <=>---<=> · <=>---<=> · <=>---<=> · <=>---<=>
-
-
 class NhitsBlock(nn.Module):
 
     def __init__(self, input_len, output_len, leadingMLP_hidden_dims, pool_kernel_dim, downsample_factor,
@@ -46,16 +43,21 @@ class NhitsBlock(nn.Module):
         # leading linear layers (MLP stack)
         if not hasattr(leadingMLP_hidden_dims, '__iter__'): leadingMLP_hidden_dims = [leadingMLP_hidden_dims] # 是个标量(容错)
 
-        leadingMLP_dims = [np.ceil(self.input_len/pool_kernel_dim + 1)] + leadingMLP_hidden_dims
+        leadingMLP_dims = [int(np.ceil(self.input_len/pool_kernel_dim + 1))] + leadingMLP_hidden_dims
         leadingMLP_list = [
-            [nn.Linear(leadingMLP_dims[i-1], leadingMLP_dims[i]), activation(), dropout()]
-            for i in range(1, len(leadingMLP_dims))
+            [
+                nn.Linear(leadingMLP_dims[i-1],
+                leadingMLP_dims[i]),
+                activation(),
+                normalization(leadingMLP_dims[i]),
+                dropout(dropout_rate)
+            ] for i in range(1, len(leadingMLP_dims))
         ]
         self.leading_MLP = nn.Sequential(*[lyr for mlp in leadingMLP_list for lyr in mlp])
 
         # forecast and backcast linear mapping (theta_l^f, theta_l^b)
-        self.backcast_linear = nn.Linear(leadingMLP_dims[-1], max( input_len//downsample_factor, 1))
-        self.forecast_linear = nn.Linear(leadingMLP_dims[-1], max(output_len//downsample_factor, 1))
+        self.backcast_linear = nn.Linear(leadingMLP_dims[-1], int(max( input_len//downsample_factor, 1)))
+        self.forecast_linear = nn.Linear(leadingMLP_dims[-1], int(max(output_len//downsample_factor, 1)))
 
     def forward(self, x):
         # 1. 先进行一步池化
@@ -74,20 +76,17 @@ class NhitsBlock(nn.Module):
         # 4. 对结果进行插值，恢复到原始尺寸
         theta_backcast = theta_backcast.unsqueeze(1) # to shape [batch_size, "channel_num", time]
         interpolated_backcast = nn.functional.interpolate(
-            pooled_backcast, size=self.input_len, mode='linear', align_corners=False
+            theta_backcast, size=self.input_len, mode='linear', align_corners=False
         )
         interpolated_backcast = interpolated_backcast.squeeze(1) # del the 2nd dim: "channel_num"
 
         theta_forecast = theta_forecast.unsqueeze(1)
         interpolated_forecast = nn.functional.interpolate(
-            pooled_forecast, size=self.output_len, mode='linear', align_corners=False
+            theta_forecast, size=self.output_len, mode='linear', align_corners=False
         )
         interpolated_forecast = interpolated_forecast.squeeze(1)
 
         return interpolated_backcast, interpolated_forecast
-
-
-#  · <=>---<=> · <=>---<=> · <=>---<=> · <=>---<=> · <=>---<=> · <=>---<=>
 
 
 class NhitsStack(nn.Module):
@@ -109,8 +108,8 @@ class NhitsStack(nn.Module):
 
     def forward(self, x):
         forecast = torch.zeros(x.size(0), self.output_len, device=x.device, dtype=x.dtype,)
-
         residual = x # stack-level residual
+
         for block in self.blocks:
             block_backcast, block_forecast = block(residual)
             residual = residual - block_backcast
@@ -119,11 +118,8 @@ class NhitsStack(nn.Module):
         return residual, forecast
 
 
-#  · <=>---<=> · <=>---<=> · <=>---<=> · <=>---<=> · <=>---<=> · <=>---<=>
-
-
 class NhitsModel(nn.Module):
-    def __init__(self, input_len, output_len, input_dim, output_dim, block_num_per_stack,
+    def __init__(self, input_len, output_len, input_dim, output_dim, stack_num, block_num_per_stack,
                  block_leadingMLP_hidden_dims, block_pool_kernel_dim, block_downsample_factor,
                  dropout_rate=0.1, activation='ReLu', pool='MaxPool1d', norm='BatchNorm1d'):
         super().__init__()
@@ -143,12 +139,12 @@ class NhitsModel(nn.Module):
 
     def forward(self, x):
         forecast = torch.zeros(x.size(0), self.output_len_multi, device=x.device, dtype=x.dtype,)
-
         residual = x
+
         for stack in self.stacks:
             stack_backcast, stack_forecast = stack(residual)
             residual = residual - stack_backcast # 前xxx
             forecast = forecast + stack_forecast # xxx之后
 
-        return residuals, forecast
-
+        forecast = forecast.view(forecast.shape[0], self.output_len, self.output_dim)
+        return residual, forecast # ^-- reshape: [batch_size, output_len_multi] -> [batch_size, output_len, output_dim]
