@@ -34,7 +34,7 @@ class TrendGenerator(nn.Module):
         super().__init__()
         # basis is of size (expansion_coef_dim, target_len):
         basis = torch.stack([(torch.arange(target_len)/target_len)**i for i in range(expansion_coef_dim)], dim=1,).T
-        # ^-- that is, 每个for i生成一个长为target_len的向量, 共生成expansion_coef_dim个
+        # ^-- 水平, 斜直线, 和整数幂次的基函数 (用expansion_coef_dim个长为target_len的向量表示)
         self.basis = nn.Parameter(basis, requires_grad=False)
 
     def forward(self, x):
@@ -47,12 +47,12 @@ class WaveformGenerator(nn.Module):
         half_len_sub1 = target_len//2 - 1
         cos_vectors = [torch.cos(2*np.pi*i * torch.arange(target_len)/target_len) for i in range(1, half_len_sub1+1)]
         sin_vectors = [torch.sin(2*np.pi*i * torch.arange(target_len)/target_len) for i in range(1, half_len_sub1+1)]
-        # basis is of size (2 * (target_len//2 - 1) + 1, target_len):
+        # 这些基底函数 is of size (2 * (target_len//2 - 1) + 1, target_len):
         basis = torch.stack([torch.ones(target_len)] + cos_vectors + sin_vectors, dim=1).T
         self.basis = nn.Parameter(basis, requires_grad=False)
 
     def forward(self, x):
-        return torch.matmul(x, self.basis)
+        return torch.matmul(x, self.basis)  # 映射到基函数(向量)上去
 
 
 class NBEATSBlock(nn.Module):
