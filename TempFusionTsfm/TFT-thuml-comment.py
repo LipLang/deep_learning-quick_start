@@ -3,7 +3,7 @@
 
 """
 Temporal Fusion Transformer (TFT)
-================================
+=================================
 
 一个用于多变量时间序列预测的深度学习模型。主要创新点：
 1. 变量处理机制：区分静态、观测和已知变量，分别处理
@@ -11,14 +11,14 @@ Temporal Fusion Transformer (TFT)
 3. 可解释性：通过变量选择网络和解释性注意力提供模型解释
 
 Architecture Overview:
----------------------
+----------------------
 1. 输入处理层：变量分类和特征嵌入
 2. 特征选择层：静态编码和变量选择
 3. 时序处理层：LSTM编码和自注意力机制
 4. 输出层：前馈网络和残差连接
 
 Implementation Details:
----------------------
+-----------------------
 - 变量分类：静态(static)、观测(observed)、已知(known)特征
 - 特征选择：使用变量选择网络(VSN)动态选择重要特征
 - 时序建模：结合LSTM和自注意力机制
@@ -30,21 +30,95 @@ Reference:
 - URL: https://arxiv.org/abs/1912.09363
 """
 
-import torch
-import torch.nn as nn
+import torch, math
 import torch.nn.functional as F
-from layers.Embed import DataEmbedding, TemporalEmbedding
-from torch import Tensor
-from typing import Optional
 from collections import namedtuple
+from torch import Tensor, nn, optim
+from torch.nn.utils import weight_norm
+from typing import Optional, NewType, List, Union, Tuple
+
+
+class FixedEmbedding(nn.Module):
+    def __init__(self, c_in, d_model):
+        super(FixedEmbedding, self).__init__()
+        w = torch.zeros(c_in, d_model).float()
+        w.require_grad = False
+
+        position = torch.arange(0, c_in).float().unsqueeze(1)
+        div_term = (torch.arange(0, d_model, 2).float() * -(math.log(10000.0) / d_model)).exp()
+        w[:, 0::2] = torch.sin(position * div_term)
+        w[:, 1::2] = torch.cos(position * div_term)
+
+        self.emb = nn.Embedding(c_in, d_model)
+        self.emb.weight = nn.Parameter(w, requires_grad=False)
+
+    def forward(self, x):
+        return self.emb(x).detach()
+
+
+class TemporalEmbedding(nn.Module):
+    def __init__(self, d_model, embed_type='fixed', freq='h'):
+        super(TemporalEmbedding, self).__init__()
+
+        minute_size = 4
+        hour_size = 24
+        weekday_size = 7
+        day_size = 32
+        month_size = 13
+
+        Embed = FixedEmbedding if embed_type == 'fixed' else nn.Embedding
+        if freq == 't': self.minute_embed = Embed(minute_size, d_model)
+        self.hour_embed = Embed(hour_size, d_model)
+        self.weekday_embed = Embed(weekday_size, d_model)
+        self.day_embed = Embed(day_size, d_model)
+        self.month_embed = Embed(month_size, d_model)
+
+    def forward(self, x):
+        x = x.long()
+        minute_x = self.minute_embed(x[:, :, 4]) if hasattr(self, 'minute_embed') else 0.
+        hour_x = self.hour_embed(x[:, :, 3])
+        weekday_x = self.weekday_embed(x[:, :, 2])
+        day_x = self.day_embed(x[:, :, 1])
+        month_x = self.month_embed(x[:, :, 0])
+        return hour_x + weekday_x + day_x + month_x + minute_x
+
+
+class TimeFeatureEmbedding(nn.Module):
+    def __init__(self, d_model, embed_type='timeF', freq='h'):
+        super(TimeFeatureEmbedding, self).__init__()
+        freq_map = {'h': 4, 't': 5, 's': 6, 'm': 1, 'a': 1, 'w': 2, 'd': 3, 'b': 3}
+        d_inp = freq_map[freq]
+        self.embed = nn.Linear(d_inp, d_model, bias=False)
+
+    def forward(self, x):
+        return self.embed(x)
+
+
+class DataEmbedding(nn.Module):
+    def __init__(self, c_in, d_model, embed_type='fixed', freq='h', dropout=0.1):
+        super(DataEmbedding, self).__init__()
+
+        self.value_embedding = TokenEmbedding(c_in=c_in, d_model=d_model)
+        self.position_embedding = PositionalEmbedding(d_model=d_model)
+        self.temporal_embedding = TemporalEmbedding(
+            d_model=d_model, embed_type=embed_type, freq=freq
+        ) if embed_type != 'timeF' else TimeFeatureEmbedding(
+            d_model=d_model, embed_type=embed_type, freq=freq
+        )
+        self.dropout = nn.Dropout(p=dropout)
+
+    def forward(self, x, x_mark):
+        if x_mark is None:
+            x = self.value_embedding(x) + self.position_embedding(x)
+        else:
+            x = self.value_embedding(x) + self.temporal_embedding(x_mark) + self.position_embedding(x)
+        return self.dropout(x)
+
 
 # 定义输入特征的类型
-# static: time-independent features
-#       : 静态特征，不随时间变化的特征（如用户性别、地理位置等）
-# observed: time features of the past(e.g. predicted targets)
-#         : 观测特征，随时间变化的历史特征（如历史销售量、温度等）
-# known: known information about the past and future(i.e. time stamp)
-#      : 已知特征，已知的未来信息（如时间戳、节假日等）
+# static: time-independent features : 静态特征，不随时间变化的特征（如用户性别、地理位置等）
+# observed: time features of the past(e.g. predicted targets) : 观测特征，随时间变化的历史特征（如历史销售量、温度等）
+# known: known information about the past and future(i.e. time stamp) : 已知特征，已知的未来信息（如时间戳、节假日等）
 TypePos = namedtuple('TypePos', ['static', 'observed'])
 
 # 数据集特征配置字典
@@ -78,6 +152,7 @@ def get_known_len(embed_type, freq):
                    'd': 3, 'b': 3}           # 日、工作日
         return freq_map[freq]
 
+
 class TFTTemporalEmbedding(TemporalEmbedding):
     """时间特征嵌入模块
 
@@ -104,6 +179,7 @@ class TFTTemporalEmbedding(TemporalEmbedding):
         )
         return embedding_x
 
+
 class TFTTimeFeatureEmbedding(nn.Module):
     """时间特征的线性嵌入模块
 
@@ -118,6 +194,7 @@ class TFTTimeFeatureEmbedding(nn.Module):
     def forward(self, x):
         # 对每个时间特征进行线性变换并堆叠
         return torch.stack([embed(x[:,:,i].unsqueeze(-1)) for i, embed in enumerate(self.embed)], dim=-2)
+
 
 class TFTEmbedding(nn.Module):
     """TFT模型的特征嵌入层
@@ -190,6 +267,7 @@ class TFTEmbedding(nn.Module):
 
         return static_input, observed_input, known_input
 
+
 class GLU(nn.Module):
     """门控线性单元
 
@@ -226,6 +304,7 @@ class GateAddNorm(nn.Module):
         x = self.glu(x)  # 门控处理
         x = x + skip_a   # 残差连接
         return self.layer_norm(self.projection(x))  # 投影和归一化
+
 
 class GRN(nn.Module):
     """门控残差网络(Gated Residual Network)
@@ -268,6 +347,7 @@ class GRN(nn.Module):
         x = self.lin_i(x)  # 进一步转换
         x = self.dropout(x)
         return self.gate(x, self.project_a(a))  # 门控处理和残差连接
+
 
 class VariableSelectionNetwork(nn.Module):
     """变量选择网络
@@ -324,6 +404,7 @@ class VariableSelectionNetwork(nn.Module):
 
         return selection_result
 
+
 class StaticCovariateEncoder(nn.Module):
     """静态协变量编码器
 
@@ -358,6 +439,7 @@ class StaticCovariateEncoder(nn.Module):
             return [grn(static_features) for grn in self.grns]
         else:
             return [None] * 4
+
 
 class InterpretableMultiHeadAttention(nn.Module):
     """可解释的多头注意力机制
@@ -435,6 +517,7 @@ class InterpretableMultiHeadAttention(nn.Module):
         out = self.out_dropout(out)  # [B,T,d]
         return out
 
+
 class TemporalFusionDecoder(nn.Module):
     """时序融合解码器
 
@@ -459,6 +542,7 @@ class TemporalFusionDecoder(nn.Module):
             context_size=configs.d_model,
             dropout=configs.dropout
         )
+
         self.attention = InterpretableMultiHeadAttention(configs)
         self.gate_after_attention = GateAddNorm(configs.d_model, configs.d_model)
         self.position_wise_grn = GRN(configs.d_model, configs.d_model, dropout=configs.dropout)
@@ -502,6 +586,7 @@ class TemporalFusionDecoder(nn.Module):
         # 最终残差连接        # Final skip connection
         out = self.gate_final(out, temporal_features[:,-self.pred_len:])
         return self.out_projection(out)
+
 
 class Model(nn.Module):
     """TFT完整模型
